@@ -44,7 +44,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           handler.Logging(mux),
+		Handler:           handler.CORS(handler.Logging(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -44,3 +44,7 @@
   - Отправка:
 
   {"type":"send","ciphertext":"BASE64_OR_ANY_TEXT","nonce":"NONCE_VALUE"}
+
+
+   sudo k3s kubectl apply -f k8s/app.yaml
+    sudo k3s kubectl get svc grape-app

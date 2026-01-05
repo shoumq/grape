@@ -32,3 +32,22 @@
 #
 #volumes:
 #  db_data:
+
+
+
+  docker build -t shoumq/grape:latest .
+  docker push shoumq/grape:latest
+
+  kubectl apply -f k8s/db.yaml
+  kubectl apply -f k8s/app.yaml
+
+  kubectl create configmap grape-migrations --from-file=migrations/001_init.sql
+  kubectl apply -f k8s/migrate-job.yaml
+  kubectl logs job/grape-migrate
+
+Если у тебя локальный minikube и без Docker Hub:
+
+  docker build -t grape:latest .
+  minikube image load grape:latest
+  kubectl set image deployment/grape-app app=grape:latest
+

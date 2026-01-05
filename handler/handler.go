@@ -67,7 +67,11 @@ func (s *Server) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := s.svc.Register(r.Context(), req.Username, req.Password, req.PublicKey)
 	if err != nil {
-		writeError(w, http.StatusConflict, "username taken")
+		if errors.Is(err, service.ErrUsernameTaken) {
+			writeError(w, http.StatusConflict, "username taken")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "registration failed")
 		return
 	}
 	writeJSON(w, http.StatusCreated, toUserDTO(user))

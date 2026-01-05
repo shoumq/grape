@@ -14,6 +14,7 @@ import (
 )
 
 var ErrUnauthorized = errors.New("unauthorized")
+var ErrUsernameTaken = errors.New("username taken")
 
 type Service struct {
 	repo     *repo.Repository
@@ -31,6 +32,9 @@ func (s *Service) Register(ctx context.Context, username, password, publicKey st
 	}
 	userID, err := s.repo.CreateUser(ctx, username, string(hash), publicKey)
 	if err != nil {
+		if errors.Is(err, repo.ErrUsernameTaken) {
+			return model.User{}, ErrUsernameTaken
+		}
 		return model.User{}, err
 	}
 	return model.User{ID: userID, Username: username, PublicKey: publicKey}, nil

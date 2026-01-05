@@ -3,10 +3,15 @@ package repo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"grape/model"
 )
+
+var ErrUsernameTaken = errors.New("username taken")
 
 type Repository struct {
 	db *sql.DB
@@ -22,6 +27,13 @@ func (r *Repository) CreateUser(ctx context.Context, username, passwordHash, pub
 		`INSERT INTO users (username, password_hash, public_key) VALUES ($1, $2, $3) RETURNING id`,
 		username, passwordHash, publicKey,
 	).Scan(&userID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "users_username_key" {
+			return 0, ErrUsernameTaken
+		}
+		return 0, err
+	}
 	return userID, err
 }
 

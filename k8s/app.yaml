@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grape-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grape-app
+  template:
+    metadata:
+      labels:
+        app: grape-app
+    spec:
+      containers:
+        - name: app
+          image: shoumq/grape:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DATABASE_URL
+              value: postgres://grape:grape@grape-db:5432/grape?sslmode=disable
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grape-app
+spec:
+  selector:
+    app: grape-app
+  ports:
+    - port: 8081
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP

@@ -9,8 +9,6 @@
   curl -X POST http://localhost:8081/api/login \
     -H 'Content-Type: application/json' \
     -d '{"username":"alice","password":"password123"}'
-//BubeR9s82bIour05qd0XBsj1GRSUUDuCWQQ_Wv9cOJw
-//6QpkTVsbGEuUrx5GMLf2nUpQDJWjsM0vaykzPtQ23Gc
 
   Профиль:
 

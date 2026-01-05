@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: grape-migrate
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: postgres:16
+          env:
+            - name: PGHOST
+              value: grape-db
+            - name: PGUSER
+              value: grape
+            - name: PGDATABASE
+              value: grape
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grape-db-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h $PGHOST -U $PGUSER -d $PGDATABASE; do
+                sleep 2
+              done
+              psql -f /migrations/001_init.sql
+      volumes:
+        - name: migrations
+          configMap:
+            name: grape-migrations

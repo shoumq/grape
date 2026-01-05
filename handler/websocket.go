@@ -1,0 +1,130 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"github.com/gorilla/websocket"
+
+	"grape/dto"
+)
+
+type client struct {
+	conn   *websocket.Conn
+	userID int64
+	chatID int64
+	send   chan []byte
+}
+
+func (s *Server) HandleWebsocket(w http.ResponseWriter, r *http.Request) {
+	chatIDStr := r.URL.Query().Get("chat_id")
+	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+	if err != nil || chatID == 0 {
+		writeError(w, http.StatusBadRequest, "invalid chat id")
+		return
+	}
+	userID, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	member, err := s.svc.UserInChat(r.Context(), userID, chatID)
+	if err != nil || !member {
+		writeError(w, http.StatusForbidden, "not a member")
+		return
+	}
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	c := &client{
+		conn:   conn,
+		userID: userID,
+		chatID: chatID,
+		send:   make(chan []byte, 16),
+	}
+	s.registerClient(c)
+	go c.writeLoop()
+	c.readLoop(s)
+	s.unregisterClient(c)
+}
+
+func (c *client) readLoop(s *Server) {
+	defer c.conn.Close()
+	c.conn.SetReadLimit(64 * 1024)
+	for {
+		var inbound struct {
+			Type       string `json:"type"`
+			Ciphertext string `json:"ciphertext"`
+			Nonce      string `json:"nonce"`
+		}
+		if err := c.conn.ReadJSON(&inbound); err != nil {
+			return
+		}
+		if inbound.Type != "send" || inbound.Ciphertext == "" || inbound.Nonce == "" {
+			continue
+		}
+		msg, err := s.svc.StoreMessage(s.baseCtx, c.chatID, c.userID, inbound.Ciphertext, inbound.Nonce)
+		if err != nil {
+			continue
+		}
+		out := struct {
+			Type string `json:"type"`
+			dto.MessageDTO
+		}{
+			Type:       "message",
+			MessageDTO: toMessageDTO(msg),
+		}
+		payload, err := json.Marshal(out)
+		if err != nil {
+			continue
+		}
+		s.broadcast(c.chatID, payload)
+	}
+}
+
+func (c *client) writeLoop() {
+	defer c.conn.Close()
+	for msg := range c.send {
+		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			return
+		}
+	}
+}
+
+func (s *Server) registerClient(c *client) {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	hub := s.chatHubs[c.chatID]
+	if hub == nil {
+		hub = make(map[*client]struct{})
+		s.chatHubs[c.chatID] = hub
+	}
+	hub[c] = struct{}{}
+}
+
+func (s *Server) unregisterClient(c *client) {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	if hub, ok := s.chatHubs[c.chatID]; ok {
+		delete(hub, c)
+		if len(hub) == 0 {
+			delete(s.chatHubs, c.chatID)
+		}
+	}
+	close(c.send)
+}
+
+func (s *Server) broadcast(chatID int64, msg []byte) {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	for c := range s.chatHubs[chatID] {
+		select {
+		case c.send <- msg:
+		default:
+			close(c.send)
+			delete(s.chatHubs[chatID], c)
+		}
+	}
+}

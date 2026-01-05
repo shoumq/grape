@@ -1,0 +1,48 @@
+Регистрация:
+
+  curl -X POST http://localhost:8081/api/register \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"alice","password":"password123","public_key":"alice_public_key"}'
+
+  Логин:
+
+  curl -X POST http://localhost:8081/api/login \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"alice","password":"password123"}'
+//BubeR9s82bIour05qd0XBsj1GRSUUDuCWQQ_Wv9cOJw
+//6QpkTVsbGEuUrx5GMLf2nUpQDJWjsM0vaykzPtQ23Gc
+
+  Профиль:
+
+  curl http://localhost:8081/api/users/me \
+    -H "Authorization: Bearer $TOKEN"
+
+  Пользователь по id:
+
+  curl http://localhost:8081/api/users/2 \
+    -H "Authorization: Bearer $TOKEN"
+
+  Создать чат:
+
+  curl -X POST http://localhost:8081/api/chats \
+    -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d '{"peer_user_id":2}'
+
+  Список чатов:
+
+  curl http://localhost:8081/api/chats \
+    -H "Authorization: Bearer $TOKEN"
+
+  История сообщений:
+
+  curl "http://localhost:8081/api/chats/1/messages?limit=50&before_id=100" \
+    -H "Authorization: Bearer $TOKEN"
+
+  WebSocket:
+
+  - URL: ws://localhost:8081/ws?chat_id=1
+  - Заголовок: Authorization: Bearer $TOKEN
+  - Отправка:
+
+  {"type":"send","ciphertext":"BASE64_OR_ANY_TEXT","nonce":"NONCE_VALUE"}

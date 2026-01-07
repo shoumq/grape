@@ -123,7 +123,7 @@ func (s *Server) HandleUserByID(w http.ResponseWriter, r *http.Request, _ int64)
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/users/")
 	idStr = strings.TrimSpace(idStr)
 	if idStr == "" {
-		writeError(w, http.StatusBadRequest, "missing user id")
+		writeError(w, http.StatusBadRequest, "bad user id")
 		return
 	}
 	targetID, err := strconv.ParseInt(idStr, 10, 64)

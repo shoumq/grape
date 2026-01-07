@@ -22,7 +22,7 @@ jobs:
           script: |
             set -e
 
-            cd /opt/backend
+            cd /root/grape
             git fetch --all
             git reset --hard origin/main
 

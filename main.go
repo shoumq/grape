@@ -37,6 +37,8 @@ func main() {
 	mux.HandleFunc("/api/register", srv.HandleRegister)
 	mux.HandleFunc("/api/login", srv.HandleLogin)
 	mux.HandleFunc("/api/users/me", srv.RequireAuth(srv.HandleMe))
+	mux.HandleFunc("/api/users/search", srv.RequireAuth(srv.HandleUserSearch))
+	mux.HandleFunc("/api/users/random", srv.RequireAuth(srv.HandleRandomUsers))
 	mux.HandleFunc("/api/users/", srv.RequireAuth(srv.HandleUserByID))
 	mux.HandleFunc("/api/chats", srv.RequireAuth(srv.HandleChats))
 	mux.HandleFunc("/api/chats/", srv.RequireAuth(srv.HandleChatSubroutes))

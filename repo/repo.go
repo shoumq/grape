@@ -46,6 +46,56 @@ func (r *Repository) GetUser(ctx context.Context, userID int64) (model.User, err
 	return u, err
 }
 
+func (r *Repository) SearchUsers(ctx context.Context, username string, limit int, excludeUserID int64) ([]model.User, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, username, public_key
+		   FROM users
+		  WHERE id <> $2 AND username ILIKE $1
+		  ORDER BY username
+		  LIMIT $3`,
+		"%"+username+"%", excludeUserID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []model.User
+	for rows.Next() {
+		var u model.User
+		if err := rows.Scan(&u.ID, &u.Username, &u.PublicKey); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+func (r *Repository) RandomUsers(ctx context.Context, limit int, excludeUserID int64) ([]model.User, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, username, public_key
+		   FROM users
+		  WHERE id <> $1
+		  ORDER BY random()
+		  LIMIT $2`,
+		excludeUserID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []model.User
+	for rows.Next() {
+		var u model.User
+		if err := rows.Scan(&u.ID, &u.Username, &u.PublicKey); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
 func (r *Repository) GetUserByUsername(ctx context.Context, username string) (int64, string, error) {
 	var userID int64
 	var hash string

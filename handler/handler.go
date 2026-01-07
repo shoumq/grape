@@ -139,6 +139,55 @@ func (s *Server) HandleUserByID(w http.ResponseWriter, r *http.Request, _ int64)
 	writeJSON(w, http.StatusOK, toUserDTO(user))
 }
 
+func (s *Server) HandleUserSearch(w http.ResponseWriter, r *http.Request, userID int64) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("username"))
+	if query == "" {
+		writeError(w, http.StatusBadRequest, "username required")
+		return
+	}
+	limit, err := parseLimit(r, 20, 100)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid limit")
+		return
+	}
+	users, err := s.svc.SearchUsers(r.Context(), query, limit, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "search failed")
+		return
+	}
+	resp := make([]dto.UserResponse, 0, len(users))
+	for _, u := range users {
+		resp = append(resp, toUserDTO(u))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) HandleRandomUsers(w http.ResponseWriter, r *http.Request, userID int64) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit, err := parseLimit(r, 20, 100)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid limit")
+		return
+	}
+	users, err := s.svc.RandomUsers(r.Context(), limit, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+	resp := make([]dto.UserResponse, 0, len(users))
+	for _, u := range users {
+		resp = append(resp, toUserDTO(u))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) HandleChats(w http.ResponseWriter, r *http.Request, userID int64) {
 	switch r.Method {
 	case http.MethodGet:
@@ -296,4 +345,19 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func parseLimit(r *http.Request, defaultLimit, maxLimit int) (int, error) {
+	limitStr := strings.TrimSpace(r.URL.Query().Get("limit"))
+	if limitStr == "" {
+		return defaultLimit, nil
+	}
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit <= 0 {
+		return 0, errors.New("invalid limit")
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	return limit, nil
 }

@@ -67,6 +67,14 @@ func (s *Service) GetUser(ctx context.Context, userID int64) (model.User, error)
 	return s.repo.GetUser(ctx, userID)
 }
 
+func (s *Service) SearchUsers(ctx context.Context, username string, limit int, excludeUserID int64) ([]model.User, error) {
+	return s.repo.SearchUsers(ctx, username, limit, excludeUserID)
+}
+
+func (s *Service) RandomUsers(ctx context.Context, limit int, excludeUserID int64) ([]model.User, error) {
+	return s.repo.RandomUsers(ctx, limit, excludeUserID)
+}
+
 func (s *Service) UserInChat(ctx context.Context, userID, chatID int64) (bool, error) {
 	return s.repo.UserInChat(ctx, userID, chatID)
 }

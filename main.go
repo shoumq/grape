@@ -30,12 +30,16 @@ func main() {
 	defer cancel()
 
 	repository := repo.New(db)
-	svc := service.New(repository, cfg.TokenTTL)
+	smsSender := service.NewSMSRUSender(cfg.SMSRUAPIID, cfg.SMSSender)
+	svc := service.New(repository, cfg.TokenTTL, smsSender)
 	srv := handler.NewServer(svc, ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/register", srv.HandleRegister)
 	mux.HandleFunc("/api/login", srv.HandleLogin)
+	mux.HandleFunc("/api/login/phone", srv.HandleLoginByPhone)
+	mux.HandleFunc("/api/phone/send_code", srv.HandlePhoneSendCode)
+	mux.HandleFunc("/api/phone/verify", srv.HandlePhoneVerify)
 	mux.HandleFunc("/api/users/me", srv.RequireAuth(srv.HandleMe))
 	mux.HandleFunc("/api/users/search", srv.RequireAuth(srv.HandleUserSearch))
 	mux.HandleFunc("/api/users/random", srv.RequireAuth(srv.HandleRandomUsers))
@@ -43,6 +47,7 @@ func main() {
 	mux.HandleFunc("/api/chats", srv.RequireAuth(srv.HandleChats))
 	mux.HandleFunc("/api/chats/", srv.RequireAuth(srv.HandleChatSubroutes))
 	mux.HandleFunc("/ws", srv.HandleWebsocket)
+	mux.HandleFunc("/ws/chats", srv.HandleChatListWebsocket)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,15 +16,18 @@ import (
 
 	"grape/dto"
 	"grape/model"
+	"grape/repo"
 	"grape/service"
 )
 
 type Server struct {
-	svc      *service.Service
-	upgrader websocket.Upgrader
-	hubMu    sync.Mutex
-	chatHubs map[int64]map[*client]struct{}
-	baseCtx  context.Context
+	svc          *service.Service
+	upgrader     websocket.Upgrader
+	hubMu        sync.Mutex
+	chatHubs     map[int64]map[*client]struct{}
+	chatListMu   sync.Mutex
+	chatListHubs map[int64]map[*chatListClient]struct{}
+	baseCtx      context.Context
 }
 
 func NewServer(svc *service.Service, baseCtx context.Context) *Server {
@@ -32,8 +36,9 @@ func NewServer(svc *service.Service, baseCtx context.Context) *Server {
 		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
 			return true
 		}},
-		chatHubs: make(map[int64]map[*client]struct{}),
-		baseCtx:  baseCtx,
+		chatHubs:     make(map[int64]map[*client]struct{}),
+		chatListHubs: make(map[int64]map[*chatListClient]struct{}),
+		baseCtx:      baseCtx,
 	}
 }
 
@@ -54,6 +59,7 @@ func (s *Server) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		Username  string `json:"username"`
 		Password  string `json:"password"`
 		PublicKey string `json:"public_key"`
+		Phone     string `json:"phone"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -61,14 +67,28 @@ func (s *Server) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Username = strings.TrimSpace(req.Username)
 	req.PublicKey = strings.TrimSpace(req.PublicKey)
+	req.Phone = strings.TrimSpace(req.Phone)
+	var phoneNormalized string
+	if req.Phone != "" {
+		var err error
+		phoneNormalized, err = normalizeRUPhone(req.Phone)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid phone")
+			return
+		}
+	}
 	if req.Username == "" || len(req.Password) < 8 || req.PublicKey == "" {
 		writeError(w, http.StatusBadRequest, "invalid input")
 		return
 	}
-	user, err := s.svc.Register(r.Context(), req.Username, req.Password, req.PublicKey)
+	user, err := s.svc.Register(r.Context(), req.Username, req.Password, req.PublicKey, phoneNormalized)
 	if err != nil {
 		if errors.Is(err, service.ErrUsernameTaken) {
 			writeError(w, http.StatusConflict, "username taken")
+			return
+		}
+		if errors.Is(err, repo.ErrPhoneTaken) {
+			writeError(w, http.StatusConflict, "phone taken")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "registration failed")
@@ -106,13 +126,155 @@ func (s *Server) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) HandleMe(w http.ResponseWriter, r *http.Request, userID int64) {
-	user, err := s.svc.GetUser(r.Context(), userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+func (s *Server) HandlePhoneSendCode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(w, http.StatusOK, toUserDTO(user))
+	var req struct {
+		Phone string `json:"phone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.Phone = strings.TrimSpace(req.Phone)
+	phoneNormalized, err := normalizeRUPhone(req.Phone)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid phone")
+		return
+	}
+	if err := s.svc.SendPhoneCode(r.Context(), phoneNormalized); err != nil {
+		if errors.Is(err, repo.ErrPhoneTaken) {
+			writeError(w, http.StatusConflict, "phone taken")
+			return
+		}
+		if errors.Is(err, service.ErrSMSNotConfigured) {
+			writeError(w, http.StatusServiceUnavailable, "sms not configured")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "sms failed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) HandlePhoneVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Phone     string `json:"phone"`
+		Code      string `json:"code"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		PublicKey string `json:"public_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.Phone = strings.TrimSpace(req.Phone)
+	req.Code = strings.TrimSpace(req.Code)
+	req.Username = strings.TrimSpace(req.Username)
+	req.PublicKey = strings.TrimSpace(req.PublicKey)
+	if req.Code == "" || req.Username == "" || len(req.Password) < 8 || req.PublicKey == "" {
+		writeError(w, http.StatusBadRequest, "invalid input")
+		return
+	}
+	phoneNormalized, err := normalizeRUPhone(req.Phone)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid phone")
+		return
+	}
+	user, err := s.svc.RegisterByPhoneCode(r.Context(), phoneNormalized, req.Code, req.Username, req.Password, req.PublicKey)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidCode) || errors.Is(err, service.ErrCodeExpired) || errors.Is(err, service.ErrCodeNotFound) {
+			writeError(w, http.StatusBadRequest, "invalid code")
+			return
+		}
+		if errors.Is(err, service.ErrUsernameTaken) {
+			writeError(w, http.StatusConflict, "username taken")
+			return
+		}
+		if errors.Is(err, repo.ErrPhoneTaken) {
+			writeError(w, http.StatusConflict, "phone taken")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "registration failed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, toUserDTO(user))
+}
+
+func (s *Server) HandleLoginByPhone(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Phone    string `json:"phone"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.Phone = strings.TrimSpace(req.Phone)
+	phoneNormalized, err := normalizeRUPhone(req.Phone)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid phone")
+		return
+	}
+	token, userID, expiresAt, err := s.svc.LoginByPhone(r.Context(), phoneNormalized, req.Password)
+	if err != nil {
+		if errors.Is(err, service.ErrUnauthorized) {
+			writeError(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "session failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"token":      token,
+		"user_id":    userID,
+		"expires_at": expiresAt,
+	})
+}
+
+func (s *Server) HandleMe(w http.ResponseWriter, r *http.Request, userID int64) {
+	switch r.Method {
+	case http.MethodGet:
+		user, err := s.svc.GetUser(r.Context(), userID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, toUserDTO(user))
+	case http.MethodPut, http.MethodPatch:
+		update, err := parseUserUpdate(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if !hasUserUpdate(update) {
+			writeError(w, http.StatusBadRequest, "no fields to update")
+			return
+		}
+		user, err := s.svc.UpdateUser(r.Context(), userID, update)
+		if err != nil {
+			if errors.Is(err, repo.ErrPhoneTaken) {
+				writeError(w, http.StatusConflict, "phone taken")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, toUserDTO(user))
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 func (s *Server) HandleUserByID(w http.ResponseWriter, r *http.Request, _ int64) {
@@ -222,6 +384,7 @@ func (s *Server) HandleChats(w http.ResponseWriter, r *http.Request, userID int6
 			writeError(w, http.StatusInternalServerError, "chat failed")
 			return
 		}
+		s.notifyChatUpdate(chatID)
 		writeJSON(w, http.StatusCreated, map[string]interface{}{"id": chatID})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -309,8 +472,93 @@ func extractToken(r *http.Request) string {
 	return r.URL.Query().Get("token")
 }
 
+func parseUserUpdate(r *http.Request) (model.UserUpdate, error) {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return model.UserUpdate{}, errors.New("invalid json")
+	}
+	var update model.UserUpdate
+	var err error
+	update.NameSet, update.Name, err = parseOptionalStringField(raw, "name")
+	if err != nil {
+		return update, errors.New("invalid name")
+	}
+	update.DateOfBirthSet, update.DateOfBirth, err = parseOptionalDateField(raw, "date_of_birth")
+	if err != nil {
+		return update, errors.New("invalid date_of_birth")
+	}
+	update.PhoneSet, update.Phone, err = parseOptionalStringField(raw, "phone")
+	if err != nil {
+		return update, errors.New("invalid phone")
+	}
+	if update.PhoneSet && update.Phone != nil {
+		normalized, err := normalizeRUPhone(*update.Phone)
+		if err != nil {
+			return update, errors.New("invalid phone")
+		}
+		update.Phone = &normalized
+	}
+	update.EmailSet, update.Email, err = parseOptionalStringField(raw, "email")
+	if err != nil {
+		return update, errors.New("invalid email")
+	}
+	update.AvatarSet, update.Avatar, err = parseOptionalStringField(raw, "avatar")
+	if err != nil {
+		return update, errors.New("invalid avatar")
+	}
+	return update, nil
+}
+
+func parseOptionalStringField(raw map[string]json.RawMessage, key string) (bool, *string, error) {
+	value, ok := raw[key]
+	if !ok {
+		return false, nil, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		return true, nil, nil
+	}
+	var parsed string
+	if err := json.Unmarshal(value, &parsed); err != nil {
+		return true, nil, err
+	}
+	parsed = strings.TrimSpace(parsed)
+	if parsed == "" {
+		return true, nil, nil
+	}
+	return true, &parsed, nil
+}
+
+func parseOptionalDateField(raw map[string]json.RawMessage, key string) (bool, *time.Time, error) {
+	set, parsed, err := parseOptionalStringField(raw, key)
+	if err != nil || !set || parsed == nil {
+		return set, nil, err
+	}
+	value, err := time.Parse("2006-01-02", *parsed)
+	if err != nil {
+		return set, nil, err
+	}
+	return set, &value, nil
+}
+
+func hasUserUpdate(update model.UserUpdate) bool {
+	return update.NameSet || update.DateOfBirthSet || update.PhoneSet || update.EmailSet || update.AvatarSet
+}
+
 func toUserDTO(user model.User) dto.UserResponse {
-	return dto.UserResponse{ID: user.ID, Username: user.Username, PublicKey: user.PublicKey}
+	resp := dto.UserResponse{
+		ID:        user.ID,
+		Username:  user.Username,
+		PublicKey: user.PublicKey,
+		Name:      user.Name,
+		Phone:     user.Phone,
+		Email:     user.Email,
+		Avatar:    user.Avatar,
+	}
+	if user.DateOfBirth != nil {
+		formatted := user.DateOfBirth.Format("2006-01-02")
+		resp.DateOfBirth = &formatted
+	}
+	return resp
 }
 
 func toMessageDTO(msg model.Message) dto.MessageDTO {

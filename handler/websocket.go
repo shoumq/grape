@@ -17,6 +17,12 @@ type client struct {
 	send   chan []byte
 }
 
+type chatListClient struct {
+	conn   *websocket.Conn
+	userID int64
+	send   chan []byte
+}
+
 func (s *Server) HandleWebsocket(w http.ResponseWriter, r *http.Request) {
 	chatIDStr := r.URL.Query().Get("chat_id")
 	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
@@ -50,6 +56,27 @@ func (s *Server) HandleWebsocket(w http.ResponseWriter, r *http.Request) {
 	s.unregisterClient(c)
 }
 
+func (s *Server) HandleChatListWebsocket(w http.ResponseWriter, r *http.Request) {
+	userID, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	c := &chatListClient{
+		conn:   conn,
+		userID: userID,
+		send:   make(chan []byte, 16),
+	}
+	s.registerChatListClient(c)
+	go c.writeLoop()
+	c.readLoop()
+	s.unregisterChatListClient(c)
+}
+
 func (c *client) readLoop(s *Server) {
 	defer c.conn.Close()
 	c.conn.SetReadLimit(64 * 1024)
@@ -81,10 +108,30 @@ func (c *client) readLoop(s *Server) {
 			continue
 		}
 		s.broadcast(c.chatID, payload)
+		s.notifyChatUpdate(c.chatID)
 	}
 }
 
 func (c *client) writeLoop() {
+	defer c.conn.Close()
+	for msg := range c.send {
+		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			return
+		}
+	}
+}
+
+func (c *chatListClient) readLoop() {
+	defer c.conn.Close()
+	c.conn.SetReadLimit(64 * 1024)
+	for {
+		if _, _, err := c.conn.ReadMessage(); err != nil {
+			return
+		}
+	}
+}
+
+func (c *chatListClient) writeLoop() {
 	defer c.conn.Close()
 	for msg := range c.send {
 		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
@@ -126,5 +173,66 @@ func (s *Server) broadcast(chatID int64, msg []byte) {
 			close(c.send)
 			delete(s.chatHubs[chatID], c)
 		}
+	}
+}
+
+func (s *Server) registerChatListClient(c *chatListClient) {
+	s.chatListMu.Lock()
+	defer s.chatListMu.Unlock()
+	hub := s.chatListHubs[c.userID]
+	if hub == nil {
+		hub = make(map[*chatListClient]struct{})
+		s.chatListHubs[c.userID] = hub
+	}
+	hub[c] = struct{}{}
+}
+
+func (s *Server) unregisterChatListClient(c *chatListClient) {
+	s.chatListMu.Lock()
+	defer s.chatListMu.Unlock()
+	if hub, ok := s.chatListHubs[c.userID]; ok {
+		delete(hub, c)
+		if len(hub) == 0 {
+			delete(s.chatListHubs, c.userID)
+		}
+	}
+	close(c.send)
+}
+
+func (s *Server) broadcastChatList(userID int64, msg []byte) {
+	s.chatListMu.Lock()
+	defer s.chatListMu.Unlock()
+	for c := range s.chatListHubs[userID] {
+		select {
+		case c.send <- msg:
+		default:
+			close(c.send)
+			delete(s.chatListHubs[userID], c)
+		}
+	}
+}
+
+func (s *Server) notifyChatUpdate(chatID int64) {
+	memberIDs, err := s.svc.ListChatMemberIDs(s.baseCtx, chatID)
+	if err != nil {
+		return
+	}
+	for _, memberID := range memberIDs {
+		chat, err := s.svc.GetChatSummary(s.baseCtx, memberID, chatID)
+		if err != nil {
+			continue
+		}
+		out := struct {
+			Type string `json:"type"`
+			dto.ChatResponse
+		}{
+			Type:         "chat_update",
+			ChatResponse: toChatDTO(chat),
+		}
+		payload, err := json.Marshal(out)
+		if err != nil {
+			continue
+		}
+		s.broadcastChatList(memberID, payload)
 	}
 }

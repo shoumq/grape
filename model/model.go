@@ -3,9 +3,27 @@ package model
 import "time"
 
 type User struct {
-	ID        int64
-	Username  string
-	PublicKey string
+	ID          int64
+	Username    string
+	PublicKey   string
+	Name        *string
+	DateOfBirth *time.Time
+	Phone       *string
+	Email       *string
+	Avatar      *string
+}
+
+type UserUpdate struct {
+	Name           *string
+	NameSet        bool
+	DateOfBirth    *time.Time
+	DateOfBirthSet bool
+	Phone          *string
+	PhoneSet       bool
+	Email          *string
+	EmailSet       bool
+	Avatar         *string
+	AvatarSet      bool
 }
 
 type Message struct {

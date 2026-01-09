@@ -3,9 +3,14 @@ package dto
 import "time"
 
 type UserResponse struct {
-	ID        int64  `json:"id"`
-	Username  string `json:"username"`
-	PublicKey string `json:"public_key"`
+	ID          int64   `json:"id"`
+	Username    string  `json:"username"`
+	PublicKey   string  `json:"public_key"`
+	Name        *string `json:"name,omitempty"`
+	DateOfBirth *string `json:"date_of_birth,omitempty"`
+	Phone       *string `json:"phone,omitempty"`
+	Email       *string `json:"email,omitempty"`
+	Avatar      *string `json:"avatar,omitempty"`
 }
 
 type ChatResponse struct {

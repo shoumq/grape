@@ -10,6 +10,8 @@ type Config struct {
 	Addr        string
 	DatabaseURL string
 	TokenTTL    time.Duration
+	SMSRUAPIID  string
+	SMSSender   string
 }
 
 func Load() Config {
@@ -27,6 +29,8 @@ func Load() Config {
 		Addr:        ":" + addr,
 		DatabaseURL: dbURL,
 		TokenTTL:    time.Duration(ttlParsed) * time.Hour,
+		SMSRUAPIID:  os.Getenv("SMS_RU_API_ID"),
+		SMSSender:   os.Getenv("SMS_SENDER"),
 	}
 }
 

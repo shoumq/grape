@@ -27,6 +27,9 @@ type Server struct {
 	chatHubs     map[int64]map[*client]struct{}
 	chatListMu   sync.Mutex
 	chatListHubs map[int64]map[*chatListClient]struct{}
+	onlineMu     sync.Mutex
+	online       map[int64]int
+	lastSeen     map[int64]time.Time
 	baseCtx      context.Context
 }
 
@@ -38,6 +41,8 @@ func NewServer(svc *service.Service, baseCtx context.Context) *Server {
 		}},
 		chatHubs:     make(map[int64]map[*client]struct{}),
 		chatListHubs: make(map[int64]map[*chatListClient]struct{}),
+		online:       make(map[int64]int),
+		lastSeen:     make(map[int64]time.Time),
 		baseCtx:      baseCtx,
 	}
 }
@@ -328,6 +333,53 @@ func (s *Server) HandleUserSearch(w http.ResponseWriter, r *http.Request, userID
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) HandleUsersOnline(w http.ResponseWriter, r *http.Request, _ int64) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	idsParam := strings.TrimSpace(r.URL.Query().Get("ids"))
+	if idsParam == "" {
+		idsParam = strings.TrimSpace(r.URL.Query().Get("id"))
+	}
+	if idsParam == "" {
+		writeError(w, http.StatusBadRequest, "ids required")
+		return
+	}
+	rawIDs := strings.Split(idsParam, ",")
+	if len(rawIDs) > 200 {
+		writeError(w, http.StatusBadRequest, "too many ids")
+		return
+	}
+	ids := make([]int64, 0, len(rawIDs))
+	for _, raw := range rawIDs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid id")
+			return
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		writeError(w, http.StatusBadRequest, "ids required")
+		return
+	}
+	resp := make([]dto.OnlineStatus, 0, len(ids))
+	for _, id := range ids {
+		online, lastSeen := s.getOnlineStatus(id)
+		resp = append(resp, dto.OnlineStatus{
+			UserID:   id,
+			Online:   online,
+			LastSeen: lastSeen,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) HandleRandomUsers(w http.ResponseWriter, r *http.Request, userID int64) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -462,6 +514,38 @@ func (s *Server) authenticate(r *http.Request) (int64, error) {
 		return 0, errors.New("missing token")
 	}
 	return s.svc.Authenticate(r.Context(), token)
+}
+
+func (s *Server) markOnline(userID int64) {
+	now := time.Now()
+	s.onlineMu.Lock()
+	defer s.onlineMu.Unlock()
+	s.online[userID]++
+	s.lastSeen[userID] = now
+}
+
+func (s *Server) markOffline(userID int64) {
+	now := time.Now()
+	s.onlineMu.Lock()
+	defer s.onlineMu.Unlock()
+	if s.online[userID] > 1 {
+		s.online[userID]--
+		s.lastSeen[userID] = now
+		return
+	}
+	delete(s.online, userID)
+	s.lastSeen[userID] = now
+}
+
+func (s *Server) getOnlineStatus(userID int64) (bool, *time.Time) {
+	s.onlineMu.Lock()
+	defer s.onlineMu.Unlock()
+	online := s.online[userID] > 0
+	if last, ok := s.lastSeen[userID]; ok {
+		lt := last
+		return online, &lt
+	}
+	return online, nil
 }
 
 func extractToken(r *http.Request) string {

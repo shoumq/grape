@@ -41,6 +41,7 @@ func main() {
 	mux.HandleFunc("/api/phone/send_code", srv.HandlePhoneSendCode)
 	mux.HandleFunc("/api/phone/verify", srv.HandlePhoneVerify)
 	mux.HandleFunc("/api/users/me", srv.RequireAuth(srv.HandleMe))
+	mux.HandleFunc("/api/users/online", srv.RequireAuth(srv.HandleUsersOnline))
 	mux.HandleFunc("/api/users/search", srv.RequireAuth(srv.HandleUserSearch))
 	mux.HandleFunc("/api/users/random", srv.RequireAuth(srv.HandleRandomUsers))
 	mux.HandleFunc("/api/users/", srv.RequireAuth(srv.HandleUserByID))

@@ -28,3 +28,9 @@ type MessageDTO struct {
 	Nonce      string    `json:"nonce"`
 	CreatedAt  time.Time `json:"created_at"`
 }
+
+type OnlineStatus struct {
+	UserID   int64      `json:"user_id"`
+	Online   bool       `json:"online"`
+	LastSeen *time.Time `json:"last_seen,omitempty"`
+}

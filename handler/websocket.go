@@ -51,6 +51,8 @@ func (s *Server) HandleWebsocket(w http.ResponseWriter, r *http.Request) {
 		send:   make(chan []byte, 16),
 	}
 	s.registerClient(c)
+	s.markOnline(userID)
+	defer s.markOffline(userID)
 	go c.writeLoop()
 	c.readLoop(s)
 	s.unregisterClient(c)
@@ -72,6 +74,8 @@ func (s *Server) HandleChatListWebsocket(w http.ResponseWriter, r *http.Request)
 		send:   make(chan []byte, 16),
 	}
 	s.registerChatListClient(c)
+	s.markOnline(userID)
+	defer s.markOffline(userID)
 	go c.writeLoop()
 	c.readLoop()
 	s.unregisterChatListClient(c)

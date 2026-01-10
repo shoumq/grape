@@ -38,6 +38,11 @@
   curl http://localhost:8081/api/users/2 \
     -H "Authorization: Bearer $TOKEN"
 
+  Онлайн статус:
+
+  curl "http://localhost:8081/api/users/online?ids=1,2" \
+    -H "Authorization: Bearer $TOKEN"
+
   Создать чат:
 
   curl -X POST http://localhost:8081/api/chats \
